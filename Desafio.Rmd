@@ -1,0 +1,245 @@
+---
+title: "Desafio IA"
+author: "Lautaro Painevil"
+date: "10 de febrero de 2019"
+output: html_document
+---
+```{r setup, include=FALSE}
+  knitr::opts_chunk$set(echo=TRUE, eval=TRUE, error=TRUE, warning=FALSE, message=FALSE, cache=FALSE, tidy=FALSE, fig.path='figures/')
+```
+
+
+
+# Carga de Librerias
+```{r eval=TRUE}
+library(tidyverse)
+library(smbinning) 
+library(agricolae)
+library(pROC)
+library(regclass)
+library(ROCR)
+```
+
+# Carga de nuestros Datos
+```{r eval=TRUE}
+# Carga de la tabla a estudiar
+data_desafio_seguros <- read.csv("C:/Users/lautaro.painevil/Downloads/Desafio/Desafio/data_desafio_seguros", stringsAsFactors=FALSE)
+data_desafio_seguros <- data_desafio_seguros %>% data.frame()
+```
+
+
+```{r eval=TRUE}
+# Conocimento nuestros datos
+summary(data_desafio_seguros)
+```
+
+# Renombrando nuestras variables
+```{r eval=TRUE}
+# Renombrando variables para una mejor identificación 
+namesvar <- c("id","Est_cuenta","Duración","Hist_credit","Propósito","Monto_credit","Ahorros","Tiempo_empleo","Tasa","Estatus_sexo","Deudas_garant","tiempo_resid","Propiedades","Edad","Pagos_pend","Tipo_hogar","Num_credit","Tipo_trabajo","Num_cargas","Fono","Extranjero","Clasificación")
+colnames(data_desafio_seguros) <- namesvar
+```
+
+# Categorizacion de variables continuas
+```{r eval=TRUE}
+# Categorizamos las variables continuas
+data_desafio_seguros <- data_desafio_seguros %>% mutate(Duración = if_else(Duración>=0 & Duración<20,"<20",
+                                                                   if_else(Duración>=20 & Duración<40,"[20-40[",
+                                                                   if_else(Duración>=40,">40","NA"))))
+
+data_desafio_seguros <- data_desafio_seguros %>% mutate(Monto_credit = if_else(Monto_credit>=0 & Monto_credit<5000,"<5000",
+                                                                       if_else(Monto_credit>=5000 & Monto_credit<10000,"[5000-10000[",
+                                                                       if_else(Monto_credit>=1000,">10000","NA"))))
+
+data_desafio_seguros <- data_desafio_seguros %>% mutate(Edad = if_else(Edad>=0 & Edad<30,"<30",
+                                                               if_else(Edad>=30 & Edad<50,"[30-50[",
+                                                               if_else(Edad>=50,">50","NA"))))
+
+data_desafio_seguros <- data_desafio_seguros %>% mutate(Clasificación = Clasificación-1)
+```
+
+
+```{r eval=TRUE}
+# Trasnformamos las variables string en factor
+data_desafio_seguros <- data_desafio_seguros %>% mutate_if(is.character, as.factor)
+data_desafio_seguros$Tasa <- as.factor(data_desafio_seguros$Tasa)
+data_desafio_seguros$tiempo_resid <- as.factor(data_desafio_seguros$tiempo_resid)
+data_desafio_seguros$Num_credit <- as.factor(data_desafio_seguros$Num_credit)
+data_desafio_seguros$Num_cargas <- as.factor(data_desafio_seguros$Num_cargas)
+```
+
+# Bases de Entrenamiento y Validación
+
+Antes de aplicar los diferentes métodos de clasificación a la base de datos, en primer
+lugar se resuelven dos cuestiones fundamentales que se abordan a continuación: balanceo
+de la variable clase y especificar cual es el conjunto de variables explicativas óptimo para
+la clasificación. El primero es un problema de equilibrado de la muestra extraída de los
+clientes y el segundo un problema de selección de variables. Ambas cuestiones son de
+crucial importancia para el desempeño de los algoritmos de clasificación.
+El tamaño de la muestra juega un papel determinante en la bondad de los modelos de
+clasificación. Cuando el desbalanceo es considerable, descubrir regularidades inherentes a
+la clase minoritaria se convierte en una tarea ardua y de poca fiabilidad. Los métodos de
+clasificación favorecen en general a la clase mayoritaria. A continuación,
+se observa la división de la base de datos en una muestra de 70 % para entrenamiento y
+30 % de validación.
+
+```{r eval=TRUE}
+# Tablas de entrenamiento y validación
+db    <- data_desafio_seguros
+train <- db %>% sample_n(size = nrow(db)*0.7)
+test  <- db %>% filter(!(id %in% train$id))
+```
+
+
+```{r eval=TRUE}
+# Clasificación en tablas de entrenamiento y validación
+table(train$Clasificación)
+table(test$Clasificación)
+table(train$Clasificación) / length(train$Clasificación)
+table(test$Clasificación) / length(test$Clasificación)
+```
+
+# Balanceo de Clases
+
+Para la clase Malos Clientes, solo hay un 30 % en la base de entrenamiento, por lo que, al clasificar, se verá favorecida la clase Buen Cliente. Dado lo anterior, es que se balancea la base de entrenamiento a una tasa de 50 % para cada clase
+```{r eval=TRUE}
+# Balanceando nuestra base
+trainbuenos<-subset(train, Clasificación==0)
+trainmalos<-subset(train, Clasificación==1)
+set.seed(99)
+table(train$Clasificación)
+table(test$Clasificación)
+muestrabuenos<- sample(1:nrow(trainbuenos),size=181,replace=FALSE)
+seleccion_buenos<-trainbuenos[muestrabuenos, ]
+Trainbalance<-rbind(seleccion_buenos,trainmalos)
+table(Trainbalance$Clasificación)
+Trainbalance$train <-"train"
+Trainid<-Trainbalance[,c("id","train")]
+db2 <- db %>% left_join(Trainid,by="id")
+db2$Trainid<-ifelse(is.na(db2$train),"dv","dt")
+dt <- db2[db2$Trainid == "dt",] #data entrenaminto
+dv <- db2[db2$Trainid == "dv",] #data validacion
+dt<-dt[,c(-23,-24)]
+dv<-dv[,c(-23,-24)]
+table(dt$Clasificación)
+table(dv$Clasificación)
+```
+
+# Selección de variables
+
+Se hizo uso de tres métodos de clasificación de variables.
+* Valores IV
+* Método de eliminación hacia atrás backward considerando valores AIC
+* Chi cuadrado
+
+Adempas, según las condiciones del problema, se infiere que se deben incluir las variables que se refieren a si poseen Tel+efono y si es Extrangero.
+Luego se observar los dintintos métodos, se decide incluir para el modelo las variables Est_cuenta, Hist_credit, Propósito, Pagos_pend, Fono, Extranjero*
+```{r eval=TRUE}
+# Selección de variables mediante valores IV
+smbinning.sumiv(df=dt[-1],y="Clasificación")
+
+# Selección de variables mediante un modelo
+modelo <- glm(Clasificación ~ ., family = binomial, dt[-1])
+stepmodelo <- step(modelo, direction = "backward")
+summary(stepmodelo)
+
+stepmodelobic <- step(modelo, k = log(nrow(dt[-1])))
+summary(stepmodelobic)
+drop1(modelo, test ="Chi")
+```
+
+# Regresión Logística
+
+```{r eval=TRUE}
+# Modelo con variables seleccionadas
+modelo2 <- glm(Clasificación ~ Est_cuenta + Hist_credit + Propósito + Pagos_pend + Fono + Extranjero, family = binomial, dt[-1])
+```
+
+# Entrenamiento
+```{r eval=TRUE}
+fitLogmodlog2 <- predict(modelo2,type="response",newdata=dt[-1])
+rocmodlog2    <- roc(response=dt$Clasificación,predictor=fitLogmodlog2)
+confusion_matrix(modelo2,dt)
+```
+
+## Bondad de ajuste
+```{r eval=TRUE}
+# Exactitud
+(confusion_matrix(modelo2,dt)[1,1] + confusion_matrix(modelo2,dt)[2,2])/confusion_matrix(modelo2,dt)[3,3]
+
+# Area bajo la curva de ROC
+rocmodlog2   
+```
+
+## Curva de ROC
+```{r eval=TRUE}
+# Gráfica ROC
+predlogmod2.dt = prediction(fitLogmodlog2, dt$Clasificación)
+perflogmod2.dt = performance(predlogmod2.dt, "tpr","fpr")
+auc.logmod2.dt = performance(predlogmod2.dt ,"auc")
+plot(perflogmod2.dt, colorize = TRUE)
+abline(a = 0, b = 1)
+```
+
+## KS
+```{r eval=TRUE}
+# KS
+max(attr(perflogmod2.dt,"y.values")[[1]]-attr(perflogmod2.dt,"x.values")[[1]])
+```
+
+
+# Validación
+```{r eval=TRUE}
+fitLogmodlog2.dv <- predict(modelo2,type="response",newdata=dv[-1])
+rocmodlog2.dv    <- roc(response=dv$Clasificación,predictor=fitLogmodlog2.dv)
+confusion_matrix(modelo2,dv)
+
+```
+
+## Bondad de ajuste
+```{r eval=TRUE}
+# Exactitud
+predichos.dv <- if_else(fitLogmodlog2.dv<0.82,0,1)
+t<-table(predichos.dv,dv$Clasificación)
+t
+(t[1,1]+t[2,2])/(sum(t))
+
+# Area bajo la curva de ROC
+rocmodlog2.dv  
+```
+
+## Curva de ROC
+```{r eval=TRUE}
+predlogmod2.dv = prediction(fitLogmodlog2.dv, dv$Clasificación)
+perflogmod2.dv = performance(predlogmod2.dv, "tpr","fpr")
+auc.logmod2.dv = performance(predlogmod2.dv ,"auc")
+plot(perflogmod2.dv, colorize = TRUE)
+abline(a = 0, b = 1)
+```
+
+## KS
+```{r eval=TRUE}
+max(attr(perflogmod2.dv,"y.values")[[1]]-attr(perflogmod2.dv,"x.values")[[1]])
+```
+
+## Punto de corte óptimo
+
+Considerando la condición "Es 5 veces peor clasificar un cliente como bueno cuando es malo, que malo cuando es bueno", el punto de corte más 
+óptimo encontrado es 0.82
+```{r eval=TRUE}
+predichos.dv <- if_else(fitLogmodlog2.dv<0.82,0,1)
+t<-table(predichos.dv,dv$Clasificación)
+t
+(t[1,1]+t[2,2])/(sum(t))
+
+```
+
+# Estimación Final
+```{r eval=TRUE}
+UF <- 27539.11
+predichosfinal <- predict(modelo2,type="response",newdata=db[-1])
+predichosfinal %>% data.frame %>% cbind(data_desafio_seguros[1])
+p  <- predichosfinal*0.1
+PrecioBPP <- (3*(1+0.03+p))*UF
+PrecioBPP %>% sum()
+```
